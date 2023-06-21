@@ -410,6 +410,34 @@ class DCVC_net(nn.Module):
         recon_image = recon_image.clamp(0, 1)
 
         return recon_image
+    
+    def compute_mv_bpp(self, referframe, input_image):
+        estmv = self.opticFlow(input_image, referframe)
+        mvfeature = self.mvEncoder(estmv)
+        z_mv = self.mvpriorEncoder(mvfeature)
+        compressed_z_mv = torch.round(z_mv)
+        params_mv = self.mvpriorDecoder(compressed_z_mv)
+
+        quant_mv = torch.round(mvfeature)
+
+        ctx_params_mv = self.auto_regressive_mv(quant_mv)
+        gaussian_params_mv = self.entropy_parameters_mv(
+            torch.cat((params_mv, ctx_params_mv), dim=1)
+        )
+        means_hat_mv, scales_hat_mv = gaussian_params_mv.chunk(2, 1)
+
+        total_bits_mv, _ = self.feature_probs_based_sigma(mvfeature, means_hat_mv, scales_hat_mv)
+        total_bits_z_mv, _ = self.iclr18_estrate_bits_z_mv(compressed_z_mv)
+
+        im_shape = input_image.size()
+        pixel_num = im_shape[0] * im_shape[2] * im_shape[3]
+        bpp_mv_y = total_bits_mv / pixel_num
+        bpp_mv_z = total_bits_z_mv / pixel_num
+
+        return {
+            'bpp_mv_y': bpp_mv_y,
+            'bpp_mv_z': bpp_mv_z
+        }
 
     def forward(self, referframe, input_image):
         estmv = self.opticFlow(input_image, referframe)
